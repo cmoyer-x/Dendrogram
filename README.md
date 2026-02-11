@@ -64,8 +64,9 @@ This workflow tests:
 Do structural similarity relationships mirror amino acid phylogeny?
 Low RF + low entanglement → strong congruence
 High RF → structural convergence or evolutionary decoupling
+
 Required R Packages
-ape
-phangorn
-dendextend
-viridisLite
+- ape
+- phangorn
+- dendextend
+- viridisLite
