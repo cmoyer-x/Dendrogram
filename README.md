@@ -4,22 +4,27 @@ LEFT tree: Structural guide tree (FoldMason; .nw)
 RIGHT tree: Amino acid maximum-likelihood tree (IQ-TREE; .contree)
 The goal is to evaluate whether structural similarity recapitulates amino acid sequence phylogeny and to visualize their congruence using a tanglegram.
 What the Script Does
+
 _1. Reads Input Trees_
 Imports both trees using ape::read.tree().
 Reports original tip counts.
+
 _2. Synchronizes Taxa_
 Retains only shared tip labels between trees.
 Ensures identical taxon sets before comparison.
+
 _3. Resolves Topological Requirements_
 Checks whether each tree is fully bifurcating using is.binary().
 Resolves polytomies with multi2di() only if necessary.
 Applies ladderize() for consistent plotting order.
+
 _4. Converts Trees for Tanglegram Visualization_
 Because maximum-likelihood trees are not ultrametric, the script:
 Computes cophenetic (patristic) distance matrices.
 Performs hierarchical clustering (hclust()).
 Converts results to dendrogram objects for use with dendextend.
 This avoids ultrametric assumptions while preserving relative topology.
+
 _5. Defines Structural Clusters_
 Clusters are derived only from the LEFT (structural) dendrogram using a relative height cutoff:
 h = 0.25 × maximum dendrogram height
@@ -27,6 +32,7 @@ These clusters define:
 Tip label colors
 Connecting line colors in the tanglegram
 Cluster definitions are therefore structural in origin.
+
 _6. Generates a Tanglegram_
 The script:
 Untangles trees to reduce line crossings.
