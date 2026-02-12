@@ -1,56 +1,83 @@
----
-title: "Dendrogram"
-output: html_document
-date: "2026-02-11"
----
+#!/usr/bin/env Rscript
 
-```{r}
-```{r}
 # ============================================================
-# AA vs Structural tree comparison (tanglegram + cluster coloring)
-# - LEFT tree: FoldMason structural guide tree (.nw)
-# - RIGHT tree: IQ-TREE AA consensus tree (.contree)
-# - Colors: derived from clusters cut on the LEFT dendrogram
-# - Lines: colored by LEFT cluster membership
-# - Branches: neutral gray
+# Structural vs Amino Acid Phylogeny Comparison
+#
+# LEFT tree  : FoldMason structural guide tree (.nw)
+# RIGHT tree : IQ-TREE amino acid ML consensus tree (.contree)
+#
+# Outputs:
+#   - Tanglegram PNG
+#   - Tree comparison metrics (RF + Entanglement)
+#   - Session info for reproducibility
+#
+# Author: Casey Moyer
 # ============================================================
 
-library(ape)
-library(phangorn)
-library(dendextend)
-library(viridisLite)
+suppressPackageStartupMessages({
+  library(ape)
+  library(phangorn)
+  library(dendextend)
+  library(viridisLite)
+})
 
 # ----------------------------
-# #1 — Input files
+# 1 — Argument handling
 # ----------------------------
-tL_file <- "~/Downloads/lysB_structural.nw"
-tR_file <- "~/Downloads/lysB_AA_ML.contree"
+args <- commandArgs(trailingOnly = TRUE)
+
+if (length(args) >= 2) {
+  tL_file <- args[1]
+  tR_file <- args[2]
+} else {
+  tL_file <- "data/lysB_structural.nw"
+  tR_file <- "data/lysB_AA_ML.contree"
+}
+
+# Output locations
+dir.create("results", showWarnings = FALSE)
+
+output_png  <- "results/AA_vs_Struct_tanglegram.png"
+output_csv  <- "results/AA_vs_Struct_tree_metrics.csv"
+output_sess <- "results/sessionInfo.txt"
+
+# Adjustable parameter
+h_rel <- 0.25  # relative cluster cut height (0–1)
 
 # ----------------------------
-# #2 — Read trees
+# 2 — Read trees
 # ----------------------------
+cat("Reading trees...\n")
+
 tL <- read.tree(tL_file)
 tR <- read.tree(tR_file)
 
 cat("Original tip counts:\n")
 cat("  LEFT (struct):", length(tL$tip.label), "\n")
-cat("  RIGHT (AA):  ", length(tR$tip.label), "\n")
+cat("  RIGHT (AA):   ", length(tR$tip.label), "\n")
 
 # ----------------------------
-# #3 — Keep only shared tips
+# 3 — Retain shared taxa only
 # ----------------------------
 shared <- intersect(tL$tip.label, tR$tip.label)
+
+if (length(shared) < 3) {
+  stop("Insufficient shared taxa between trees.")
+}
 
 tL <- keep.tip(tL, shared)
 tR <- keep.tip(tR, shared)
 
-cat("Shared tips:", length(shared), "\n")
 stopifnot(setequal(tL$tip.label, tR$tip.label))
+
+cat("Shared tips:", length(shared), "\n")
+
+# ----------------------------
+# 4 — Root + resolve topology
+# ----------------------------
 tL <- midpoint(tL)
 tR <- midpoint(tR)
-# ----------------------------
-# #4 — Resolve polytomies only if needed
-# ----------------------------
+
 if (!is.binary(tL)) tL <- multi2di(tL)
 if (!is.binary(tR)) tR <- multi2di(tR)
 
@@ -58,8 +85,7 @@ tL <- ladderize(tL)
 tR <- ladderize(tR)
 
 # ----------------------------
-# #5 — Convert phylo → dendrogram using cophenetic distances
-# (avoids ultrametric requirement)
+# 5 — Convert to dendrograms
 # ----------------------------
 dL <- as.dendrogram(
   hclust(as.dist(cophenetic(tL)), method = "average")
@@ -70,34 +96,28 @@ dR <- as.dendrogram(
 )
 
 # ----------------------------
-# #6 — Define clusters on LEFT using relative height
+# 6 — Define clusters (LEFT tree)
 # ----------------------------
-h_rel <- 0.25
-maxh  <- attr(dL, "height")
+maxh <- attr(dL, "height")
+clL  <- cutree(dL, h = h_rel * maxh)
 
-clL <- cutree(dL, h = h_rel * maxh)
-
-k   <- length(unique(clL))
-pal <- setNames(viridis(k), sort(unique(clL)))
-
-stopifnot(all(labels(dL) %in% names(clL)))
-stopifnot(all(labels(dR) %in% names(clL)))
+k    <- length(unique(clL))
+pal  <- setNames(viridis(k), sort(unique(clL)))
 
 # ----------------------------
-# #7 — Color tip labels by LEFT clusters
+# 7 — Color dendrograms
 # ----------------------------
-dL_col <- set(dL, "labels_col", pal[ clL[ labels(dL) ] ])
-dR_col <- set(dR, "labels_col", pal[ clL[ labels(dR) ] ])
+dL_col <- set(dL, "labels_col", pal[clL[labels(dL)]])
+dR_col <- set(dR, "labels_col", pal[clL[labels(dR)]])
 
-# Neutral branch styling
-dL_col <- set(dL_col, "branches_col", "gray20")
-dR_col <- set(dR_col, "branches_col", "gray20")
+dL_col <- set(dL_col, "branches_col", "gray30")
+dR_col <- set(dR_col, "branches_col", "gray30")
 
 dL_col <- set(dL_col, "branches_lwd", 1)
 dR_col <- set(dR_col, "branches_lwd", 1)
 
 # ----------------------------
-# #8 — Untangle to reduce crossings
+# 8 — Untangle trees
 # ----------------------------
 set.seed(1)
 unt <- untangle(dL_col, dR_col, method = "step2side")
@@ -105,14 +125,13 @@ unt <- untangle(dL_col, dR_col, method = "step2side")
 dL_col <- unt[[1]]
 dR_col <- unt[[2]]
 
-# Color connecting lines by LEFT clusters
-line_cols <- pal[ clL[ labels(dL_col) ] ]
+line_cols <- pal[clL[labels(dL_col)]]
 
 # ----------------------------
-# #9 — Plot tanglegram
+# 9 — Plot tanglegram
 # ----------------------------
 png(
-  filename = "~/Documents/AA_vs_Struct_tanglegram.png",
+  filename = output_png,
   width = 12,
   height = 9,
   units = "in",
@@ -123,7 +142,7 @@ tanglegram(
   dL_col,
   dR_col,
   lab.cex = 1,
-  margin_inner = 5.3, #This changes the size of the names in the middle to the lines for better visualization 
+  margin_inner = 5,
   highlight_distinct_edges = FALSE,
   common_subtrees_color_lines = FALSE,
   lwd = 1,
@@ -132,31 +151,30 @@ tanglegram(
 
 dev.off()
 
-cat("Wrote: AA_vs_Struct_tanglegram.png\n")
+cat("Wrote:", output_png, "\n")
 
 # ----------------------------
-# #10 — Tree comparison metrics
+# 10 — Tree comparison metrics
 # ----------------------------
-
-# Normalized Robinson–Foulds distance (topology only)
 rf <- RF.dist(unroot(tL), unroot(tR), normalize = TRUE)
-
-cat("Normalized RF distance:", rf, "\n")
-
-# Entanglement metric
 ent <- entanglement(dL_col, dR_col)
 
+cat("Normalized RF distance:", rf, "\n")
 cat("Entanglement:", ent, "\n")
 
-write.csv(
-  data.frame(
-    metric = c("Normalized_RF", "Entanglement"),
-    value  = c(rf, ent)
-  ),
-  "~/Documents/AA_vs_Struct_tree_metrics.csv",
-  row.names = FALSE
+metrics_df <- data.frame(
+  metric = c("Normalized_RF", "Entanglement"),
+  value  = c(rf, ent)
 )
 
-cat("Wrote: AA_vs_Struct_tree_metrics.csv\n")
-```
+write.csv(metrics_df, output_csv, row.names = FALSE)
 
+cat("Wrote:", output_csv, "\n")
+
+# ----------------------------
+# 11 — Save session info
+# ----------------------------
+writeLines(capture.output(sessionInfo()), output_sess)
+cat("Wrote:", output_sess, "\n")
+
+cat("Analysis complete.\n")
