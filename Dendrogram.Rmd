@@ -1,83 +1,76 @@
-#!/usr/bin/env Rscript
-
 # ============================================================
-# Structural vs Amino Acid Phylogeny Comparison
+# AA vs Structural Tree Comparison (Tanglegram + Cluster Coloring)
 #
-# LEFT tree  : FoldMason structural guide tree (.nw)
-# RIGHT tree : IQ-TREE amino acid ML consensus tree (.contree)
+# Description:
+#   Compares a FoldMason structural guide tree (.nw) with an
+#   IQ-TREE amino acid consensus tree (.contree) using a tanglegram.
+#   Clusters are cut from the LEFT (structural) dendrogram and used
+#   to color tip labels and connecting lines. Branches are neutral gray.
 #
-# Outputs:
-#   - Tanglegram PNG
-#   - Tree comparison metrics (RF + Entanglement)
-#   - Session info for reproducibility
+# Input:
+#   - Structural guide tree:  <prefix>_structure.nw
+#   - AA consensus tree:      <prefix>_AA.contree
 #
-# Author: Casey Moyer
+# Output:
+#   - <prefix>_AA_vs_Struct_tanglegram.png
+#   - <prefix>_AA_vs_Struct_tree_metrics.csv
+#
+# Dependencies:
+#   install.packages(c("ape", "phangorn", "dendextend", "viridisLite"))
+#
+# Usage:
+#   Set `prefix` and `out_dir` below, then source the script.
 # ============================================================
 
-suppressPackageStartupMessages({
-  library(ape)
-  library(phangorn)
-  library(dendextend)
-  library(viridisLite)
-})
+library(ape)
+library(phangorn)
+library(dendextend)
+library(viridisLite)
 
 # ----------------------------
-# 1 — Argument handling
+# USER PARAMETERS
 # ----------------------------
-args <- commandArgs(trailingOnly = TRUE)
-
-if (length(args) >= 2) {
-  tL_file <- args[1]
-  tR_file <- args[2]
-} else {
-  tL_file <- "data/lysB_structural.nw"
-  tR_file <- "data/lysB_AA_ML.contree"
-}
-
-# Output locations
-dir.create("results", showWarnings = FALSE)
-
-output_png  <- "results/AA_vs_Struct_tanglegram.png"
-output_csv  <- "results/AA_vs_Struct_tree_metrics.csv"
-output_sess <- "results/sessionInfo.txt"
-
-# Adjustable parameter
-h_rel <- 0.25  # relative cluster cut height (0–1)
+prefix  <- "lysB"                  # shared filename prefix
+data_dir <- "data"                 # directory containing input trees
+out_dir  <- "results"              # directory for outputs
+h_rel    <- 0.25                   # relative height for cluster cutoff (0–1)
+random_seed <- 1                   # for reproducible untangling
 
 # ----------------------------
-# 2 — Read trees
+# #1 — Resolve file paths
 # ----------------------------
-cat("Reading trees...\n")
+tL_file <- file.path(data_dir, paste0(prefix, "_structure.nw"))
+tR_file <- file.path(data_dir, paste0(prefix, "_AA.contree"))
 
+stopifnot(file.exists(tL_file), file.exists(tR_file))
+
+# ----------------------------
+# #2 — Read trees
+# ----------------------------
 tL <- read.tree(tL_file)
 tR <- read.tree(tR_file)
 
 cat("Original tip counts:\n")
-cat("  LEFT (struct):", length(tL$tip.label), "\n")
-cat("  RIGHT (AA):   ", length(tR$tip.label), "\n")
+cat("  LEFT  (structural):", length(tL$tip.label), "\n")
+cat("  RIGHT (AA):        ", length(tR$tip.label), "\n")
 
 # ----------------------------
-# 3 — Retain shared taxa only
+# #3 — Keep only shared tips
 # ----------------------------
 shared <- intersect(tL$tip.label, tR$tip.label)
-
-if (length(shared) < 3) {
-  stop("Insufficient shared taxa between trees.")
-}
-
 tL <- keep.tip(tL, shared)
 tR <- keep.tip(tR, shared)
 
+cat("Shared tips:", length(shared), "\n")
 stopifnot(setequal(tL$tip.label, tR$tip.label))
 
-cat("Shared tips:", length(shared), "\n")
-
-# ----------------------------
-# 4 — Root + resolve topology
-# ----------------------------
+# Midpoint root both trees
 tL <- midpoint(tL)
 tR <- midpoint(tR)
 
+# ----------------------------
+# #4 — Resolve polytomies if needed
+# ----------------------------
 if (!is.binary(tL)) tL <- multi2di(tL)
 if (!is.binary(tR)) tR <- multi2di(tR)
 
@@ -85,96 +78,91 @@ tL <- ladderize(tL)
 tR <- ladderize(tR)
 
 # ----------------------------
-# 5 — Convert to dendrograms
+# #5 — Convert phylo → dendrogram via cophenetic distances
+#       (avoids ultrametric requirement)
 # ----------------------------
-dL <- as.dendrogram(
-  hclust(as.dist(cophenetic(tL)), method = "average")
-)
-
-dR <- as.dendrogram(
-  hclust(as.dist(cophenetic(tR)), method = "average")
-)
+dL <- as.dendrogram(hclust(as.dist(cophenetic(tL)), method = "average"))
+dR <- as.dendrogram(hclust(as.dist(cophenetic(tR)), method = "average"))
 
 # ----------------------------
-# 6 — Define clusters (LEFT tree)
+# #6 — Define clusters on LEFT tree at relative height
 # ----------------------------
 maxh <- attr(dL, "height")
 clL  <- cutree(dL, h = h_rel * maxh)
-
 k    <- length(unique(clL))
 pal  <- setNames(viridis(k), sort(unique(clL)))
 
+stopifnot(all(labels(dL) %in% names(clL)))
+stopifnot(all(labels(dR) %in% names(clL)))
+
+cat("Number of clusters (k =", k, ") at h_rel =", h_rel, "\n")
+
 # ----------------------------
-# 7 — Color dendrograms
+# #7 — Color tip labels by LEFT cluster membership
 # ----------------------------
 dL_col <- set(dL, "labels_col", pal[clL[labels(dL)]])
 dR_col <- set(dR, "labels_col", pal[clL[labels(dR)]])
 
-dL_col <- set(dL_col, "branches_col", "gray30")
-dR_col <- set(dR_col, "branches_col", "gray30")
-
+# Neutral branch styling
+dL_col <- set(dL_col, "branches_col", "gray20")
+dR_col <- set(dR_col, "branches_col", "gray20")
 dL_col <- set(dL_col, "branches_lwd", 1)
 dR_col <- set(dR_col, "branches_lwd", 1)
 
 # ----------------------------
-# 8 — Untangle trees
+# #8 — Untangle to reduce line crossings
 # ----------------------------
-set.seed(1)
-unt <- untangle(dL_col, dR_col, method = "step2side")
-
+set.seed(random_seed)
+unt    <- untangle(dL_col, dR_col, method = "step2side")
 dL_col <- unt[[1]]
 dR_col <- unt[[2]]
 
+# Color connecting lines by LEFT cluster
 line_cols <- pal[clL[labels(dL_col)]]
 
 # ----------------------------
-# 9 — Plot tanglegram
+# #9 — Plot tanglegram
 # ----------------------------
-png(
-  filename = output_png,
-  width = 12,
-  height = 9,
-  units = "in",
-  res = 300
-)
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+png_file <- file.path(out_dir, paste0(prefix, "_AA_vs_Struct_tanglegram.png"))
+
+png(filename = png_file, width = 12, height = 9, units = "in", res = 300)
 
 tanglegram(
-  dL_col,
-  dR_col,
-  lab.cex = 1,
-  margin_inner = 5,
-  highlight_distinct_edges = FALSE,
+  dL_col, dR_col,
+  lab.cex                    = 1,
+  margin_inner               = 5.3,
+  highlight_distinct_edges   = FALSE,
   common_subtrees_color_lines = FALSE,
-  lwd = 1,
-  color_lines = line_cols
+  lwd                        = 1,
+  color_lines                = line_cols
 )
 
 dev.off()
-
-cat("Wrote:", output_png, "\n")
+cat("Wrote:", png_file, "\n")
 
 # ----------------------------
-# 10 — Tree comparison metrics
+# #10 — Tree comparison metrics
 # ----------------------------
-rf <- RF.dist(unroot(tL), unroot(tR), normalize = TRUE)
+
+# Normalized Robinson–Foulds distance (topology only)
+rf  <- RF.dist(unroot(tL), unroot(tR), normalize = TRUE)
+
+# Entanglement metric
 ent <- entanglement(dL_col, dR_col)
 
-cat("Normalized RF distance:", rf, "\n")
-cat("Entanglement:", ent, "\n")
+cat("Normalized RF distance:", round(rf,  4), "\n")
+cat("Entanglement:          ", round(ent, 4), "\n")
 
-metrics_df <- data.frame(
-  metric = c("Normalized_RF", "Entanglement"),
-  value  = c(rf, ent)
+csv_file <- file.path(out_dir, paste0(prefix, "_AA_vs_Struct_tree_metrics.csv"))
+
+write.csv(
+  data.frame(
+    metric = c("Normalized_RF", "Entanglement"),
+    value  = c(rf, ent)
+  ),
+  csv_file,
+  row.names = FALSE
 )
-
-write.csv(metrics_df, output_csv, row.names = FALSE)
-
-cat("Wrote:", output_csv, "\n")
-
-# ----------------------------
-# 11 — Save session info
-# ----------------------------
-writeLines(capture.output(sessionInfo()), output_sess)
-cat("Wrote:", output_sess, "\n")
-
-cat("Analysis complete.\n")
+cat("Wrote:", csv_file, "\n")
